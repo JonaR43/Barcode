@@ -1,4 +1,4 @@
-# Re-posting the full working script with simulated full-label preview (Option 2) implemented.
+# Updating GUI to include Step 3: Settings Panel (show text toggle + label type dropdown)
 
 import os
 import time
@@ -14,6 +14,7 @@ from tkinter import (
     BooleanVar,
     Checkbutton,
     Canvas,
+    OptionMenu,
 )
 from barcode import Code128
 from barcode.writer import ImageWriter
@@ -30,9 +31,11 @@ except ImportError:
     BaseTk = Tk
     dragdrop_enabled = False
 
-# Avery 5160 layout
-LABEL_WIDTH = 2.625 * inch
-LABEL_HEIGHT = 1.0 * inch
+# Label specs
+label_types = {
+    "Avery 5160": (2.625 * inch, 1.0 * inch),
+    "Avery 5163": (4.0 * inch, 2.0 * inch)
+}
 PAGE_WIDTH, PAGE_HEIGHT = letter
 COLUMNS = 3
 ROWS = 10
@@ -43,7 +46,6 @@ output_pdf = "avery_labels.pdf"
 
 preview_image = None  # Global reference to prevent garbage collection
 
-
 def generate_pdf(csv_path, preview_only=False):
     global preview_image
 
@@ -52,6 +54,9 @@ def generate_pdf(csv_path, preview_only=False):
         if "code" not in df.columns:
             status_var.set("❌ CSV must contain a 'code' column.")
             return
+
+        label_w, label_h = label_types[label_type.get()]
+        show_text = show_text_var.get()
 
         if preview_only:
             code = str(df.iloc[0]["code"])
@@ -63,7 +68,8 @@ def generate_pdf(csv_path, preview_only=False):
             label_canvas.delete("all")
             label_canvas.create_rectangle(0, 0, 300, 100, fill="white", outline="gray")
             label_canvas.create_image(20, 20, anchor="nw", image=preview_image)
-            label_canvas.create_text(150, 90, text=code, font=("Helvetica", 8))
+            if show_text:
+                label_canvas.create_text(150, 90, text=code, font=("Helvetica", 8))
             img.close()
             os.remove(f"{filename}.png")
             return
@@ -84,19 +90,17 @@ def generate_pdf(csv_path, preview_only=False):
 
             col = idx % COLUMNS
             row_pos = (idx // COLUMNS) % ROWS
-            x = H_MARGIN + col * (LABEL_WIDTH + H_GAP)
-            y = PAGE_HEIGHT - V_MARGIN - (row_pos + 1) * LABEL_HEIGHT
+            x = H_MARGIN + col * (label_w + H_GAP)
+            y = PAGE_HEIGHT - V_MARGIN - (row_pos + 1) * label_h
 
             if idx > 0 and idx % (COLUMNS * ROWS) == 0:
                 c.showPage()
 
-            c.drawImage(
-                barcode_filename,
-                x + 4,
-                y + 5,
-                width=LABEL_WIDTH - 8,
-                height=LABEL_HEIGHT - 10,
-            )
+            c.drawImage(barcode_filename, x + 4, y + 5, width=label_w - 8, height=label_h - 10)
+            if show_text:
+                c.setFont("Helvetica", 8)
+                c.drawCentredString(x + label_w / 2, y + 2, barcode_data)
+
             os.remove(barcode_filename)
 
         c.save()
@@ -107,14 +111,12 @@ def generate_pdf(csv_path, preview_only=False):
     except Exception as e:
         status_var.set(f"❌ Error: {str(e)}")
 
-
 def select_file():
     file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
     if file_path:
         status_var.set("Processing...")
         generate_pdf(file_path)
         generate_pdf(file_path, preview_only=True)
-
 
 def toggle_theme():
     dark = theme_var.get()
@@ -124,16 +126,16 @@ def toggle_theme():
 
     root.configure(bg=bg)
     frame.configure(bg=bg)
+    settings_frame.configure(bg=bg)
     preview_frame.configure(bg=bg)
     label_canvas.configure(bg="white")
 
-    for widget in [header, subheader, status, link_label, drop_label]:
+    for widget in [header, subheader, status, link_label, drop_label, preview_label]:
         widget.configure(bg=bg, fg=fg)
 
     subheader.configure(fg=hint_fg)
     checkbox.configure(bg=bg, fg=fg)
     drop_label.configure(bg="#444" if dark else "#e0e0e0")
-
 
 def handle_drop(event):
     file_path = event.data.strip("{}")
@@ -144,95 +146,47 @@ def handle_drop(event):
     else:
         status_var.set("❌ Only CSV files are supported.")
 
-
 def on_drag_enter(event):
     drop_label.config(bg="#d0ffd0")
-
 
 def on_drag_leave(event):
     drop_label.config(bg="#e0e0e0")
 
-
 # === GUI Setup ===
 root = BaseTk()
 root.title("🧾 Avery 5160 Barcode Label Generator")
-root.geometry("480x500")
+root.geometry("500x620")
 root.configure(bg="#f4f4f4")
 
 theme_var = BooleanVar()
 theme_var.set(False)
+show_text_var = BooleanVar(value=True)
+label_type = StringVar(value="Avery 5160")
 status_var = StringVar()
 status_var.set("Upload or drag a CSV with a 'code' column.")
 
-header = Label(
-    root, text="Barcode Label Generator", font=("Helvetica", 16, "bold"), bg="#f4f4f4"
-)
+header = Label(root, text="Barcode Label Generator", font=("Helvetica", 16, "bold"), bg="#f4f4f4")
 header.pack(pady=(20, 5))
 
-subheader = Label(
-    root,
-    text="CSV must include a 'code' column",
-    font=("Helvetica", 10),
-    bg="#f4f4f4",
-    fg="#666",
-)
+subheader = Label(root, text="CSV must include a 'code' column", font=("Helvetica", 10), bg="#f4f4f4", fg="#666")
 subheader.pack()
 
 frame = Frame(root, bg="#f4f4f4")
 frame.pack(pady=(10, 5))
 
-btn = Button(
-    frame,
-    text="📂 Choose CSV",
-    font=("Helvetica", 11),
-    command=select_file,
-    bg="#4caf50",
-    fg="white",
-    padx=12,
-    pady=6,
-)
+btn = Button(frame, text="📂 Choose CSV", font=("Helvetica", 11), command=select_file, bg="#4caf50", fg="white", padx=12, pady=6)
 btn.grid(row=0, column=0, padx=5)
 
-checkbox = Checkbutton(
-    frame,
-    text="🌙 Dark Mode",
-    variable=theme_var,
-    command=toggle_theme,
-    bg="#f4f4f4",
-)
+checkbox = Checkbutton(frame, text="🌙 Dark Mode", variable=theme_var, command=toggle_theme, bg="#f4f4f4")
 checkbox.grid(row=0, column=1, padx=5)
 
-link_label = Label(
-    root,
-    text="",
-    font=("Helvetica", 10, "underline"),
-    bg="#f4f4f4",
-    cursor="hand2",
-)
+link_label = Label(root, text="", font=("Helvetica", 10, "underline"), bg="#f4f4f4", cursor="hand2")
 link_label.pack(pady=(5, 0))
 
-status = Label(
-    root,
-    textvariable=status_var,
-    wraplength=400,
-    bg="#f4f4f4",
-    font=("Helvetica", 9),
-    fg="#333",
-)
+status = Label(root, textvariable=status_var, wraplength=400, bg="#f4f4f4", font=("Helvetica", 9), fg="#333")
 status.pack(pady=10)
 
-# Drop zone
-drop_label = Label(
-    root,
-    text="⬇️ Drop CSV file here",
-    font=("Helvetica", 10, "italic"),
-    bg="#e0e0e0",
-    fg="#444",
-    relief="groove",
-    width=40,
-    height=3,
-    bd=2,
-)
+drop_label = Label(root, text="⬇️ Drop CSV file here", font=("Helvetica", 10, "italic"), bg="#e0e0e0", fg="#444", relief="groove", width=40, height=3, bd=2)
 drop_label.pack(pady=(0, 10))
 
 if dragdrop_enabled:
@@ -241,21 +195,24 @@ if dragdrop_enabled:
     drop_label.dnd_bind("<<DragEnter>>", on_drag_enter)
     drop_label.dnd_bind("<<DragLeave>>", on_drag_leave)
 
-# Preview panel
 preview_frame = Frame(root, bg="#f4f4f4")
 preview_frame.pack()
 
-preview_label = Label(
-    preview_frame, text="🔍 Label Preview", font=("Helvetica", 10, "bold"), bg="#f4f4f4"
-)
+preview_label = Label(preview_frame, text="🔍 Label Preview", font=("Helvetica", 10, "bold"), bg="#f4f4f4")
 preview_label.pack()
 
-label_canvas = Canvas(
-    preview_frame, width=300, height=100, bg="white", bd=1, relief="sunken"
-)
+label_canvas = Canvas(preview_frame, width=300, height=100, bg="white", bd=1, relief="sunken")
 label_canvas.pack(pady=(5, 20))
 
+# === Settings Panel ===
+settings_frame = Frame(root, bg="#f4f4f4")
+settings_frame.pack()
+
+Label(settings_frame, text="⚙️ Settings", font=("Helvetica", 11, "bold"), bg="#f4f4f4").pack(pady=(0, 5))
+
+Checkbutton(settings_frame, text="Show Text Below Barcode", variable=show_text_var, bg="#f4f4f4").pack(pady=2)
+
+Label(settings_frame, text="Label Type:", bg="#f4f4f4").pack()
+OptionMenu(settings_frame, label_type, *label_types.keys()).pack(pady=5)
+
 root.mainloop()
-
-
-
