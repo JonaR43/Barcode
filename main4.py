@@ -13,6 +13,8 @@ from tkinter import (
     Checkbutton,
     Canvas,
     OptionMenu,
+    Scale,
+    HORIZONTAL,
 )
 from tkinter import ttk
 from barcode import Code128
@@ -44,6 +46,24 @@ H_GAP = 0.125 * inch
 output_pdf = "avery_labels.pdf"
 
 preview_image = None
+current_csv_path = None
+barcode_width = 260
+barcode_height = 60
+
+# === GUI Setup ===
+root = BaseTk()
+root.title("🧾 Avery Barcode Label Generator")
+root.geometry("520x760")
+root.configure(bg="#f4f4f4")
+
+text_font_size_var = StringVar(value="8")
+barcode_font_size_var = StringVar(value="14")  # default font size under barcode
+theme_var = BooleanVar()
+theme_var.set(False)
+show_text_var = BooleanVar(value=True)
+label_type = StringVar(value="Avery 5160")
+status_var = StringVar()
+status_var.set("Upload or drag a CSV with a 'code' column.")
 
 def generate_pdf(csv_path, preview_only=False):
     global preview_image
@@ -55,17 +75,20 @@ def generate_pdf(csv_path, preview_only=False):
 
         label_w, label_h = label_types[label_type.get()]
         show_text = show_text_var.get()
+        font_size = int(text_font_size_var.get())
 
         if preview_only:
             code = str(df.iloc[0]["code"])
             filename = "preview_barcode"
             Code128(code, writer=ImageWriter()).save(filename, options={"font_size": int(barcode_font_size_var.get())})
             img = Image.open(f"{filename}.png")
-            img = img.resize((260, 60))
+            img = img.resize((barcode_width, barcode_height))
             preview_image = ImageTk.PhotoImage(img)
             label_canvas.delete("all")
             label_canvas.create_rectangle(0, 0, 300, 100, fill="white", outline="gray")
             label_canvas.create_image(20, 20, anchor="nw", image=preview_image)
+            if show_text:
+                label_canvas.create_text(150, 90, text=code, font=("Helvetica", font_size))
             img.close()
             os.remove(f"{filename}.png")
             return
@@ -93,6 +116,9 @@ def generate_pdf(csv_path, preview_only=False):
                 c.showPage()
 
             c.drawImage(barcode_filename, x + 4, y + 5, width=label_w - 8, height=label_h - 10)
+            if show_text:
+                c.setFont("Helvetica", font_size)
+                c.drawCentredString(x + label_w / 2, y + 2, barcode_data)
 
             os.remove(barcode_filename)
 
@@ -105,11 +131,19 @@ def generate_pdf(csv_path, preview_only=False):
         status_var.set(f"❌ Error: {str(e)}")
 
 def select_file():
+    global current_csv_path
     file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
     if file_path:
+        current_csv_path = file_path
         status_var.set("Processing...")
         generate_pdf(file_path)
         generate_pdf(file_path, preview_only=True)
+
+def on_slider_change(event=None):
+    if current_csv_path:
+        generate_pdf(current_csv_path, preview_only=True)
+    else:
+        status_var.set("❌ Load a CSV before adjusting preview settings.")
 
 def toggle_theme():
     dark = theme_var.get()
@@ -126,8 +160,10 @@ def toggle_theme():
     label_canvas.configure(bg="white")
 
 def handle_drop(event):
+    global current_csv_path
     file_path = event.data.strip("{}")
     if file_path.lower().endswith(".csv"):
+        current_csv_path = file_path
         status_var.set("Processing dropped file...")
         generate_pdf(file_path)
         generate_pdf(file_path, preview_only=True)
@@ -140,19 +176,13 @@ def on_drag_enter(event):
 def on_drag_leave(event):
     drop_label.config(bg="#e0e0e0")
 
-# === GUI Setup ===
-root = BaseTk()
-root.title("🧾 Avery Barcode Label Generator")
-root.geometry("520x640")
-root.configure(bg="#f4f4f4")
-
-theme_var = BooleanVar()
-theme_var.set(False)
-show_text_var = BooleanVar(value=True)
-barcode_font_size_var = StringVar(value="14")  # default barcode font size
-label_type = StringVar(value="Avery 5160")
-status_var = StringVar()
-status_var.set("Upload or drag a CSV with a 'code' column.")
+def update_slider_value(dimension, value):
+    global barcode_width, barcode_height
+    if dimension == "width":
+        barcode_width = int(value)
+    elif dimension == "height":
+        barcode_height = int(value)
+    on_slider_change()
 
 # === Notebook ===
 notebook = ttk.Notebook(root)
@@ -202,12 +232,21 @@ Label(settings_tab, text="⚙️ Settings", font=("Helvetica", 14, "bold"), bg="
 Checkbutton(settings_tab, text="Show Text Below Barcode", variable=show_text_var, bg="#f4f4f4").pack(pady=5)
 Label(settings_tab, text="Label Type:", bg="#f4f4f4").pack()
 OptionMenu(settings_tab, label_type, *label_types.keys()).pack(pady=5)
-Checkbutton(settings_tab, text="🌙 Dark Mode", variable=theme_var, command=toggle_theme, bg="#f4f4f4").pack(pady=(10, 20))
-Label(settings_tab, text="Barcode Font Size (under barcode)", bg="#f4f4f4").pack()
-OptionMenu(settings_tab, barcode_font_size_var, *[str(i) for i in range(6, 30)]).pack(pady=(0, 10))
+Checkbutton(settings_tab, text="🌙 Dark Mode", variable=theme_var, command=toggle_theme, bg="#f4f4f4").pack(pady=(10, 5))
 
+Label(settings_tab, text="Barcode Width", bg="#f4f4f4").pack()
+Scale(settings_tab, from_=100, to=400, orient=HORIZONTAL, resolution=10, command=lambda v: update_slider_value("width", v), bg="#f4f4f4").pack(pady=(0, 10))
+Label(settings_tab, text="Barcode Height", bg="#f4f4f4").pack()
+Scale(settings_tab, from_=30, to=120, orient=HORIZONTAL, resolution=5, command=lambda v: update_slider_value("height", v), bg="#f4f4f4").pack(pady=(0, 10))
+
+Label(settings_tab, text="Text Font Size", bg="#f4f4f4").pack()
+Label(settings_tab, text="Barcode Font Size", bg="#f4f4f4").pack()
+OptionMenu(settings_tab, barcode_font_size_var, *[str(i) for i in range(6, 30)], command=lambda v: on_slider_change()).pack(pady=(0, 10))
+OptionMenu(settings_tab, text_font_size_var, *[str(i) for i in range(6, 20)], command=lambda v: on_slider_change()).pack(pady=(0, 10))
 
 root.mainloop()
+
+
 
 
 

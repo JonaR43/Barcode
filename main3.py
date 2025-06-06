@@ -1,5 +1,3 @@
-# Updating GUI to include Step 3: Settings Panel (show text toggle + label type dropdown)
-
 import os
 import time
 import pandas as pd
@@ -16,6 +14,7 @@ from tkinter import (
     Canvas,
     OptionMenu,
 )
+from tkinter import ttk
 from barcode import Code128
 from barcode.writer import ImageWriter
 from reportlab.pdfgen import canvas as pdf_canvas
@@ -31,7 +30,7 @@ except ImportError:
     BaseTk = Tk
     dragdrop_enabled = False
 
-# Label specs
+# Label definitions
 label_types = {
     "Avery 5160": (2.625 * inch, 1.0 * inch),
     "Avery 5163": (4.0 * inch, 2.0 * inch)
@@ -44,11 +43,10 @@ V_MARGIN = 0.5 * inch
 H_GAP = 0.125 * inch
 output_pdf = "avery_labels.pdf"
 
-preview_image = None  # Global reference to prevent garbage collection
+preview_image = None
 
 def generate_pdf(csv_path, preview_only=False):
     global preview_image
-
     try:
         df = pd.read_csv(csv_path)
         if "code" not in df.columns:
@@ -63,7 +61,7 @@ def generate_pdf(csv_path, preview_only=False):
             filename = "preview_barcode"
             Code128(code, writer=ImageWriter()).save(filename)
             img = Image.open(f"{filename}.png")
-            img = img.resize((260, 60))  # Resize for label preview
+            img = img.resize((260, 60))
             preview_image = ImageTk.PhotoImage(img)
             label_canvas.delete("all")
             label_canvas.create_rectangle(0, 0, 300, 100, fill="white", outline="gray")
@@ -125,17 +123,12 @@ def toggle_theme():
     hint_fg = "#cccccc" if dark else "#666666"
 
     root.configure(bg=bg)
-    frame.configure(bg=bg)
-    settings_frame.configure(bg=bg)
-    preview_frame.configure(bg=bg)
-    label_canvas.configure(bg="white")
-
-    for widget in [header, subheader, status, link_label, drop_label, preview_label]:
+    for widget in [status, link_label, drop_label, preview_label, header]:
         widget.configure(bg=bg, fg=fg)
-
-    subheader.configure(fg=hint_fg)
-    checkbox.configure(bg=bg, fg=fg)
-    drop_label.configure(bg="#444" if dark else "#e0e0e0")
+    subheader.configure(bg=bg, fg=hint_fg)
+    settings_tab.configure(bg=bg)
+    generator_tab.configure(bg=bg)
+    label_canvas.configure(bg="white")
 
 def handle_drop(event):
     file_path = event.data.strip("{}")
@@ -154,8 +147,8 @@ def on_drag_leave(event):
 
 # === GUI Setup ===
 root = BaseTk()
-root.title("🧾 Avery 5160 Barcode Label Generator")
-root.geometry("500x620")
+root.title("🧾 Avery Barcode Label Generator")
+root.geometry("520x640")
 root.configure(bg="#f4f4f4")
 
 theme_var = BooleanVar()
@@ -165,28 +158,35 @@ label_type = StringVar(value="Avery 5160")
 status_var = StringVar()
 status_var.set("Upload or drag a CSV with a 'code' column.")
 
-header = Label(root, text="Barcode Label Generator", font=("Helvetica", 16, "bold"), bg="#f4f4f4")
-header.pack(pady=(20, 5))
+# === Notebook ===
+notebook = ttk.Notebook(root)
+notebook.pack(expand=1, fill="both", pady=5)
 
-subheader = Label(root, text="CSV must include a 'code' column", font=("Helvetica", 10), bg="#f4f4f4", fg="#666")
+generator_tab = Frame(notebook, bg="#f4f4f4")
+settings_tab = Frame(notebook, bg="#f4f4f4")
+notebook.add(generator_tab, text="🧾 Generator")
+notebook.add(settings_tab, text="⚙️ Settings")
+
+# === Generator Tab ===
+header = Label(generator_tab, text="Barcode Label Generator", font=("Helvetica", 16, "bold"), bg="#f4f4f4")
+header.pack(pady=(15, 3))
+
+subheader = Label(generator_tab, text="CSV must include a 'code' column", font=("Helvetica", 10), bg="#f4f4f4", fg="#666")
 subheader.pack()
 
-frame = Frame(root, bg="#f4f4f4")
+frame = Frame(generator_tab, bg="#f4f4f4")
 frame.pack(pady=(10, 5))
 
 btn = Button(frame, text="📂 Choose CSV", font=("Helvetica", 11), command=select_file, bg="#4caf50", fg="white", padx=12, pady=6)
 btn.grid(row=0, column=0, padx=5)
 
-checkbox = Checkbutton(frame, text="🌙 Dark Mode", variable=theme_var, command=toggle_theme, bg="#f4f4f4")
-checkbox.grid(row=0, column=1, padx=5)
-
-link_label = Label(root, text="", font=("Helvetica", 10, "underline"), bg="#f4f4f4", cursor="hand2")
+link_label = Label(generator_tab, text="", font=("Helvetica", 10, "underline"), bg="#f4f4f4", cursor="hand2")
 link_label.pack(pady=(5, 0))
 
-status = Label(root, textvariable=status_var, wraplength=400, bg="#f4f4f4", font=("Helvetica", 9), fg="#333")
+status = Label(generator_tab, textvariable=status_var, wraplength=400, bg="#f4f4f4", font=("Helvetica", 9), fg="#333")
 status.pack(pady=10)
 
-drop_label = Label(root, text="⬇️ Drop CSV file here", font=("Helvetica", 10, "italic"), bg="#e0e0e0", fg="#444", relief="groove", width=40, height=3, bd=2)
+drop_label = Label(generator_tab, text="⬇️ Drop CSV file here", font=("Helvetica", 10, "italic"), bg="#e0e0e0", fg="#444", relief="groove", width=40, height=3, bd=2)
 drop_label.pack(pady=(0, 10))
 
 if dragdrop_enabled:
@@ -195,24 +195,19 @@ if dragdrop_enabled:
     drop_label.dnd_bind("<<DragEnter>>", on_drag_enter)
     drop_label.dnd_bind("<<DragLeave>>", on_drag_leave)
 
-preview_frame = Frame(root, bg="#f4f4f4")
-preview_frame.pack()
-
-preview_label = Label(preview_frame, text="🔍 Label Preview", font=("Helvetica", 10, "bold"), bg="#f4f4f4")
+preview_label = Label(generator_tab, text="🔍 Label Preview", font=("Helvetica", 10, "bold"), bg="#f4f4f4")
 preview_label.pack()
 
-label_canvas = Canvas(preview_frame, width=300, height=100, bg="white", bd=1, relief="sunken")
+label_canvas = Canvas(generator_tab, width=300, height=100, bg="white", bd=1, relief="sunken")
 label_canvas.pack(pady=(5, 20))
 
-# === Settings Panel ===
-settings_frame = Frame(root, bg="#f4f4f4")
-settings_frame.pack()
-
-Label(settings_frame, text="⚙️ Settings", font=("Helvetica", 11, "bold"), bg="#f4f4f4").pack(pady=(0, 5))
-
-Checkbutton(settings_frame, text="Show Text Below Barcode", variable=show_text_var, bg="#f4f4f4").pack(pady=2)
-
-Label(settings_frame, text="Label Type:", bg="#f4f4f4").pack()
-OptionMenu(settings_frame, label_type, *label_types.keys()).pack(pady=5)
+# === Settings Tab ===
+Label(settings_tab, text="⚙️ Settings", font=("Helvetica", 14, "bold"), bg="#f4f4f4").pack(pady=(20, 5))
+Checkbutton(settings_tab, text="Show Text Below Barcode", variable=show_text_var, bg="#f4f4f4").pack(pady=5)
+Label(settings_tab, text="Label Type:", bg="#f4f4f4").pack()
+OptionMenu(settings_tab, label_type, *label_types.keys()).pack(pady=5)
+Checkbutton(settings_tab, text="🌙 Dark Mode", variable=theme_var, command=toggle_theme, bg="#f4f4f4").pack(pady=(10, 20))
 
 root.mainloop()
+
+
