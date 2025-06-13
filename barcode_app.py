@@ -38,15 +38,16 @@ label_types = {
 PAGE_WIDTH, PAGE_HEIGHT = letter
 COLUMNS = 3
 ROWS = 10
-H_MARGIN = 0.19 * inch  #prev 0.19
-V_MARGIN = 0.5 * inch
-H_GAP = 0.125 * inch #prev 0.125
+H_MARGIN = 0.15 * inch  # Reduced from 0.19
+V_MARGIN = 0.3 * inch   # Keep the same
+H_GAP = 0.20 * inch     # Reduced from 0.125
+#V_GAP = 0.0 * inch      # Adjust the row gap
 output_pdf = "avery_labels.pdf"
 
 preview_image = None
 
 def generate_pdf(csv_path, preview_only=False):
-    global preview_image
+    global preview_imagecs
     try:
         df = pd.read_csv(csv_path)
         if "code" not in df.columns:
@@ -90,27 +91,58 @@ def generate_pdf(csv_path, preview_only=False):
         total_labels = len(df)
         c = pdf_canvas.Canvas(output_pdf, pagesize=letter)
 
+
+        # Calculate vertical spacing
+        usable_height = PAGE_HEIGHT - (2 * V_MARGIN)
+        total_label_height = ROWS * label_h
+        v_gap = (usable_height - total_label_height) / (ROWS - 1)
+
         for idx, row in df.iterrows():
+            col = idx % COLUMNS
+            row_pos = (idx // COLUMNS) % ROWS
+            
+            # Generate the barcode image first
             barcode_data = str(row["code"])
             barcode_base = f"barcode_{idx}"
             barcode_filename = f"{barcode_base}.png"
-
-            Code128(barcode_data, writer=ImageWriter()).save(barcode_base, options={"font_size": int(barcode_font_size_var.get()),
-                                                                                    "font_path": "Calibri.ttf"})
-            time.sleep(0.1)
-            img = Image.open(barcode_filename)
-            img.save(barcode_filename)
-            img.close()
-
-            col = idx % COLUMNS
-            row_pos = (idx // COLUMNS) % ROWS
+            
+            # Generate barcode image with specified font size
+            Code128(barcode_data, writer=ImageWriter()).save(barcode_base, options={
+                "font_size": int(barcode_font_size_var.get()),
+                "font_path": "Calibri.ttf",
+                "module_height": 20
+            })
+            
+            # Calculate label position
+            label_w, label_h = label_types[label_type.get()]
             x = H_MARGIN + col * (label_w + H_GAP)
-            y = PAGE_HEIGHT - V_MARGIN - (row_pos + 1) * label_h
+            y = PAGE_HEIGHT - V_MARGIN - (row_pos * (label_h + v_gap)) - label_h
 
             if idx > 0 and idx % (COLUMNS * ROWS) == 0:
                 c.showPage()
 
-            c.drawImage(barcode_filename, x + 2, y + 5, width=label_w - 8, height=label_h - 10)
+            # Calculate centered position with more padding
+            padding = 0.08 * inch  # Add padding around each barcode
+            barcode_width = label_w - (2 * padding)  # Reduce width by padding on both sides
+            barcode_height = label_h - (2 * padding)  # Reduce height by padding on both sides
+            x_centered = x + padding  # Add padding to left
+            y_centered = y + padding  # Add padding to bottom
+
+            # Draw the barcode with centered positioning and padding
+            c.drawImage(
+                barcode_filename,
+                x_centered,
+                y_centered,
+                width=barcode_width,
+                height=barcode_height
+            )
+            
+            # Draw label outline (grid)
+            c.saveState()
+            c.setStrokeColorRGB(0.8, 0.8, 0.8)  # Light gray color
+            c.setLineWidth(0.25)  # Thin line
+            c.rect(x, y, label_w, label_h)  # Draw rectangle around label area
+            c.restoreState()
 
             os.remove(barcode_filename)
 
