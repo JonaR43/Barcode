@@ -486,6 +486,119 @@ def generate_manual():
     generate_from_codes(codes)
     generate_from_codes(codes, preview_only=True)
 
+def toggle_multi_batch_ui():
+    if multi_batch_mode_var.get():
+        multi_batch_frame.pack(fill="x", pady=(0, 5), before=codes_preview_label)
+    else:
+        multi_batch_frame.pack_forget()
+
+def refresh_batch_queue():
+    batch_queue_box.configure(state="normal")
+    batch_queue_box.delete("1.0", "end")
+    total = sum(len(b["codes"]) for b in multi_batches)
+    for i, b in enumerate(multi_batches):
+        batch_queue_box.insert("end", f"{i+1}. {b['summary']}\n")
+    batch_queue_box.configure(state="disabled")
+    if multi_batches:
+        status_var.set(f"Queue: {len(multi_batches)} batch(es) — {total} total labels")
+
+def add_to_batch_queue():
+    codes, error = get_codes_list()
+    if error:
+        status_var.set(error)
+        return
+    prefix = prefix_var.get().strip()
+    number = number_var.get()
+    start = start_letter_var.get().strip().upper()
+    display_text = display_text_var.get().strip()
+    end_letter = index_to_letters(letters_to_index(start) + len(codes) - 1)
+    summary = f"{prefix}D{number}  {start} → {end_letter}  ({len(codes)} labels)"
+    if display_text:
+        summary += f'  [{display_text}]'
+    multi_batches.append({"codes": codes, "display_text": display_text, "summary": summary})
+    refresh_batch_queue()
+
+def clear_batch_queue():
+    multi_batches.clear()
+    refresh_batch_queue()
+    status_var.set("Queue cleared.")
+
+def generate_all_batches():
+    if not multi_batches:
+        status_var.set("Queue is empty — add batches first.")
+        return
+
+    all_pairs = [(code, b["display_text"]) for b in multi_batches for code in b["codes"]]
+    total_labels = len(all_pairs)
+    label_w, label_h = label_types[label_type_var.get()]
+    c = pdf_canvas.Canvas(output_pdf, pagesize=letter)
+    progress_bar.set(0)
+    root.update()
+
+    for idx, (barcode_data, display_text) in enumerate(all_pairs):
+        barcode_base = f"barcode_{idx}"
+        barcode_filename = f"{barcode_base}.png"
+        try:
+            Code128(str(barcode_data), writer=ImageWriter()).save(barcode_base, options={
+                "font_path": BARCODE_FONT,
+                "font_size": 10,
+                "module_width": 0.2,
+                "module_height": 6,
+                "quiet_zone": 2.0,
+                "text_distance": 5,
+                "write_text": False
+            })
+            time.sleep(0.05)
+            img = Image.open(barcode_filename)
+            img.load()
+            img.save(barcode_filename)
+            img.close()
+            time.sleep(0.05)
+
+            col = idx % COLUMNS
+            row_pos = (idx // COLUMNS) % ROWS
+            h_margin = float(h_margin_var.get()) * inch
+            v_margin = float(v_margin_var.get()) * inch
+            x = h_margin + col * H_PITCH
+            y = PAGE_HEIGHT - v_margin - (row_pos + 1) * label_h
+
+            if idx > 0 and idx % (COLUMNS * ROWS) == 0:
+                c.showPage()
+
+            if show_label_outlines_var.get():
+                c.setStrokeColorRGB(0.8, 0.2, 0.2)
+                c.setLineWidth(0.5)
+                c.rect(x, y, label_w, label_h)
+                c.setStrokeColorRGB(0, 0, 0)
+
+            code_fs = int(code_font_size_var.get())
+            c.drawImage(barcode_filename, x + 4, y + 23, width=label_w - 8, height=label_h - 31)
+            c.setFont("Helvetica", code_fs)
+            c.drawCentredString(x + label_w / 2, y + 14, barcode_data)
+            if display_text:
+                c.drawCentredString(x + label_w / 2, y + 5, display_text)
+
+            try:
+                os.remove(barcode_filename)
+            except PermissionError:
+                time.sleep(0.1)
+                try:
+                    os.remove(barcode_filename)
+                except:
+                    pass
+        except Exception as e:
+            status_var.set(f"Error generating barcode {idx}: {str(e)}")
+            continue
+
+        progress_bar.set((idx + 1) / total_labels)
+        status_var.set(f"Generating... {idx + 1}/{total_labels}")
+        root.update()
+
+    c.save()
+    progress_bar.set(1)
+    status_var.set(f"✓ {total_labels} labels from {len(multi_batches)} batches generated!")
+    manual_link_btn.configure(state="normal")
+
 def change_appearance_mode(new_mode):
     ctk.set_appearance_mode(new_mode)
 
@@ -679,9 +792,11 @@ root.geometry("550x780")
 # Variables
 show_text_var = BooleanVar(value=True)
 show_label_outlines_var = BooleanVar(value=False)  # Debug: draw label cell borders
-code_font_size_var = StringVar(value="7")           # Font size for barcode code text
+code_font_size_var = StringVar(value="11")           # Font size for barcode code text
 h_margin_var = StringVar(value="0.1875")            # Avery 5160 left margin in inches
-v_margin_var = StringVar(value="0.5")               # Avery 5160 top margin in inches
+v_margin_var = StringVar(value="0.45")               # Avery 5160 top margin in inches
+multi_batch_mode_var = BooleanVar(value=False)       # Multi-prefix batch mode
+multi_batches = []                                   # [{'codes': [...], 'display_text': '', 'summary': ''}]
 label_type_var = StringVar(value="Avery 5160")
 status_var = StringVar(value="Ready to generate barcodes")
 prefix_var = StringVar()
@@ -797,8 +912,40 @@ generate_btn = ctk.CTkButton(buttons_frame, text="Generate Barcodes",
                              font=ctk.CTkFont(size=13, weight="bold"))
 generate_btn.pack(side="left", padx=5)
 
+# Multi-batch mode checkbox
+multi_batch_check = ctk.CTkCheckBox(manual_frame, text="Combine multiple prefixes",
+                                    variable=multi_batch_mode_var,
+                                    command=toggle_multi_batch_ui,
+                                    font=ctk.CTkFont(size=13))
+multi_batch_check.pack(pady=(10, 0))
+
+# Multi-batch collapsible frame (hidden by default)
+multi_batch_frame = ctk.CTkFrame(manual_frame)
+# Not packed yet — shown via toggle_multi_batch_ui()
+
+ctk.CTkLabel(multi_batch_frame, text="Batch Queue:",
+             font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(8, 3))
+batch_queue_box = ctk.CTkTextbox(multi_batch_frame, width=380, height=90,
+                                 state="disabled", font=ctk.CTkFont(size=11))
+batch_queue_box.pack(padx=10, pady=(0, 5))
+
+batch_ctrl_frame = ctk.CTkFrame(multi_batch_frame, fg_color="transparent")
+batch_ctrl_frame.pack(pady=(0, 5))
+ctk.CTkButton(batch_ctrl_frame, text="Add to Queue",
+              command=add_to_batch_queue, width=130, height=35,
+              font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=5)
+ctk.CTkButton(batch_ctrl_frame, text="Clear Queue",
+              command=clear_batch_queue, width=110, height=35,
+              font=ctk.CTkFont(size=12),
+              fg_color="transparent", border_width=2).pack(side="left", padx=5)
+
+ctk.CTkButton(multi_batch_frame, text="Generate All Batches",
+              command=generate_all_batches, width=220, height=40,
+              font=ctk.CTkFont(size=13, weight="bold")).pack(pady=(0, 10))
+
 # Codes preview textbox
-ctk.CTkLabel(manual_frame, text="Codes Preview:", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(10, 5))
+codes_preview_label = ctk.CTkLabel(manual_frame, text="Codes Preview:", font=ctk.CTkFont(size=12, weight="bold"))
+codes_preview_label.pack(pady=(10, 5))
 preview_textbox = ctk.CTkTextbox(manual_frame, width=300, height=80, state="disabled",
                                  font=ctk.CTkFont(size=11))
 preview_textbox.pack(pady=5)
